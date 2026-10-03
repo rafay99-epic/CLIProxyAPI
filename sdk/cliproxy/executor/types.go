@@ -84,6 +84,15 @@ const (
 	SessionAffinityProviderMetadataKey = "session_affinity_provider"
 	// SessionAffinityModelMetadataKey carries the model used during session affinity selection.
 	SessionAffinityModelMetadataKey = "session_affinity_model"
+	// SessionAffinityRetryExhaustedMetadataKey holds a map[string]struct{} of auth IDs that
+	// left the current request only after same-auth retries ran out on failures that are
+	// not the credential's fault (transport errors, 529, 5xx). SessionAffinitySelector keeps
+	// a session bound to such an auth instead of re-pinning it to this request's fallback.
+	SessionAffinityRetryExhaustedMetadataKey = "session_affinity_retry_exhausted"
+	// SessionAffinityTransientFallbackMetadataKey is set by SessionAffinitySelector.Pick when
+	// it served the attempt from a fallback auth without rebinding the session, so OnResult
+	// must not record a binding for that auth either.
+	SessionAffinityTransientFallbackMetadataKey = "session_affinity_transient_fallback"
 )
 
 // Request encapsulates the translated payload that will be sent to a provider executor.

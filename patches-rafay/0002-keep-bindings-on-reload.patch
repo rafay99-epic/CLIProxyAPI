@@ -1,0 +1,157 @@
+diff --git a/sdk/cliproxy/auth/conductor_selection.go b/sdk/cliproxy/auth/conductor_selection.go
+index 4464cac3..e6c2c3f2 100644
+--- a/sdk/cliproxy/auth/conductor_selection.go
++++ b/sdk/cliproxy/auth/conductor_selection.go
+@@ -428,10 +428,17 @@ func (m *Manager) SetSelector(selector Selector) {
+ 		m.mu.Unlock()
+ 		return
+ 	}
++	// Carry session bindings across routing reloads so warm sessions keep their accounts.
++	adopted := false
++	if next, ok := selector.(*SessionAffinitySelector); ok {
++		if prev, okPrev := oldSelector.(*SessionAffinitySelector); okPrev {
++			adopted = next.adoptBindings(prev)
++		}
++	}
+ 	m.selector = selector
+ 	m.mu.Unlock()
+ 
+-	if oldSelector != nil {
++	if oldSelector != nil && !adopted {
+ 		if stoppable, ok := oldSelector.(StoppableSelector); ok {
+ 			stoppable.Stop()
+ 		}
+diff --git a/sdk/cliproxy/auth/selector.go b/sdk/cliproxy/auth/selector.go
+index 4afab8d2..e2754e88 100644
+--- a/sdk/cliproxy/auth/selector.go
++++ b/sdk/cliproxy/auth/selector.go
+@@ -1341,6 +1341,27 @@ func truncateSessionID(id string) string {
+ 	return id[:8] + "..."
+ }
+ 
++// adoptBindings makes s take over prev's session cache and LCP matcher so a routing
++// reload keeps warm sessions on their accounts; the adopted state switches to s's TTL.
++// It only adopts into a selector whose cache is still empty and must run before s is
++// published. When it returns true, prev must not be stopped.
++func (s *SessionAffinitySelector) adoptBindings(prev *SessionAffinitySelector) bool {
++	if s == nil || prev == nil || s == prev || s.cache == nil || prev.cache == nil || s.cache.Len() > 0 {
++		return false
++	}
++	s.cache.mu.RLock()
++	ttl := s.cache.ttl
++	s.cache.mu.RUnlock()
++	s.cache.Stop()
++	s.cache = prev.cache
++	s.cache.setTTL(ttl)
++	if prev.matcher != nil {
++		s.matcher = prev.matcher
++		s.matcher.SetTTL(ttl)
++	}
++	return true
++}
++
+ // Stop releases resources held by the selector.
+ func (s *SessionAffinitySelector) Stop() {
+ 	if s == nil {
+diff --git a/sdk/cliproxy/auth/selector_reload_bindings_test.go b/sdk/cliproxy/auth/selector_reload_bindings_test.go
+new file mode 100644
+index 00000000..7ec75f82
+--- /dev/null
++++ b/sdk/cliproxy/auth/selector_reload_bindings_test.go
+@@ -0,0 +1,48 @@
++package auth
++
++import (
++	"slices"
++	"testing"
++	"time"
++
++	cliproxysession "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/session"
++)
++
++func TestSetSelectorKeepsSessionAffinityBindings(t *testing.T) {
++	previous := NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{Fallback: &RoundRobinSelector{}, TTL: time.Hour})
++	t.Cleanup(previous.Stop)
++	manager := NewManager(nil, previous, nil)
++
++	const sessionKey = "mixed::claude:sess-reload::claude-model"
++	previous.cache.Set(sessionKey, "auth-a")
++	turns := []cliproxysession.CanonicalTurn{
++		{Role: "user", Parts: []cliproxysession.CanonicalPart{{Kind: "text", Value: "turn 1"}}},
++		{Role: "assistant", Parts: []cliproxysession.CanonicalPart{{Kind: "text", Value: "ack 1"}}},
++		{Role: "user", Parts: []cliproxysession.CanonicalPart{{Kind: "text", Value: "turn 2"}}},
++	}
++	lcp := previous.matcher.BindWithResult("lcp:v1::claude::claude-model::caller", turns, "auth-b")
++	if lcp.SessionID == "" {
++		t.Fatal("LCP bind returned no session ID")
++	}
++
++	// A routing reload installs a fresh selector with a different TTL and fallback.
++	next := NewSessionAffinitySelectorWithConfig(SessionAffinityConfig{Fallback: &FillFirstSelector{}, TTL: 3 * time.Hour})
++	t.Cleanup(next.Stop)
++	manager.SetSelector(next)
++
++	if manager.Selector() != next {
++		t.Fatal("SetSelector did not install the new selector")
++	}
++	if got, ok := next.cache.GetAndRefresh(sessionKey); !ok || got != "auth-a" {
++		t.Fatalf("explicit binding after reload = %q, %v; want auth-a", got, ok)
++	}
++	if authIDs, _, ok := next.matcher.LookupSession(lcp.SessionID); !ok || !slices.Contains(authIDs, "auth-b") {
++		t.Fatalf("LCP binding after reload = %v, %v; want auth-b", authIDs, ok)
++	}
++	next.cache.mu.RLock()
++	expiresAt := next.cache.entries[sessionKey].expiresAt
++	next.cache.mu.RUnlock()
++	if remaining := time.Until(expiresAt); remaining < 2*time.Hour {
++		t.Fatalf("refreshed binding expires in %v, want the new 3h TTL", remaining)
++	}
++}
+diff --git a/sdk/cliproxy/auth/session_cache.go b/sdk/cliproxy/auth/session_cache.go
+index b136bced..1621ad5b 100644
+--- a/sdk/cliproxy/auth/session_cache.go
++++ b/sdk/cliproxy/auth/session_cache.go
+@@ -407,8 +407,21 @@ func (c *SessionCache) Stop() {
+ 	})
+ }
+ 
++// setTTL changes the lifetime applied when bindings are next set or refreshed.
++// Existing bindings keep their current expiry until touched.
++func (c *SessionCache) setTTL(ttl time.Duration) {
++	if c == nil || ttl <= 0 {
++		return
++	}
++	c.mu.Lock()
++	c.ttl = ttl
++	c.mu.Unlock()
++}
++
+ func (c *SessionCache) cleanupLoop() {
++	c.mu.RLock()
+ 	interval := c.ttl / 2
++	c.mu.RUnlock()
+ 	if interval < time.Millisecond {
+ 		interval = time.Millisecond
+ 	}
+diff --git a/sdk/cliproxy/session/lcp.go b/sdk/cliproxy/session/lcp.go
+index e26a2a2a..8ed86603 100644
+--- a/sdk/cliproxy/session/lcp.go
++++ b/sdk/cliproxy/session/lcp.go
+@@ -733,6 +733,17 @@ func NewMerklePrefixMatcherWithConfig(cfg MerklePrefixMatcherConfig) *MerklePref
+ 	}
+ }
+ 
++// SetTTL changes the lifetime applied when bindings are next created or refreshed.
++// Existing bindings keep their current expiry until touched.
++func (m *MerklePrefixMatcher) SetTTL(ttl time.Duration) {
++	if m == nil || ttl <= 0 {
++		return
++	}
++	m.mu.Lock()
++	m.ttl = ttl
++	m.mu.Unlock()
++}
++
+ func (m *MerklePrefixMatcher) now() time.Time {
+ 	if m != nil && m.nowFunc != nil {
+ 		return m.nowFunc()

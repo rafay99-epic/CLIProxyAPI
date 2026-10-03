@@ -1,0 +1,616 @@
+diff --git a/sdk/cliproxy/auth/conductor_cooldown.go b/sdk/cliproxy/auth/conductor_cooldown.go
+index 27702959..a9bf45ea 100644
+--- a/sdk/cliproxy/auth/conductor_cooldown.go
++++ b/sdk/cliproxy/auth/conductor_cooldown.go
+@@ -1506,12 +1506,14 @@ func resultErrorFromError(err error) *Error {
+ 
+ // shouldSkipCredentialCooldown reports failures that must not mark auth/model cooling.
+ // Connection lifecycle is intentionally separate from request_scoped so transport
+-// drops do not also stop credential rotation via isRequestInvalidError.
++// drops do not also stop credential rotation via isRequestInvalidError. HTTP 529
++// (Anthropic overloaded_error) is provider-wide, so it never cools one credential.
+ func shouldSkipCredentialCooldown(err *Error) bool {
+ 	if err != nil && err.Code == ErrorCodeForceCooldown {
+ 		return false
+ 	}
+-	return isRequestScopedResultError(err) || isConnectionLifecycleResultError(err) || isTransientTransportResultError(err)
++	return isRequestScopedResultError(err) || isConnectionLifecycleResultError(err) || isTransientTransportResultError(err) ||
++		statusCodeFromResult(err) == 529
+ }
+ 
+ // isConnectionLifecycleError reports transport/session lifecycle failures that must
+diff --git a/sdk/cliproxy/auth/conductor_execution.go b/sdk/cliproxy/auth/conductor_execution.go
+index 9616a821..26ae0f76 100644
+--- a/sdk/cliproxy/auth/conductor_execution.go
++++ b/sdk/cliproxy/auth/conductor_execution.go
+@@ -624,6 +624,25 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req
+ 				} else {
+ 					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
+ 				}
++				resp, errExec = retrySameAuth(execCtx, m, &opts, auth.ID, resp, errExec, func() (cliproxyexecutor.Response, error) {
++					execCtx = newUpstreamAttemptContext(execCtx)
++					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
++					startRetry := time.Now()
++					retryResp, errRetry := executor.Execute(execCtx, auth, execReq, execOpts)
++					errRetry = markUpstreamExecutionAttemptFromContext(execCtx, errRetry)
++					if errRetry != nil {
++						if hasUpstreamExecutionAttempt(errRetry) {
++							upstreamErr = errRetry
++						}
++						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, time.Since(startRetry), errRetry)
++					}
++					return retryResp, errRetry
++				})
++				if errExec != nil {
++					if errCtx := execCtx.Err(); errCtx != nil {
++						return cliproxyexecutor.Response{}, errCtx
++					}
++				}
+ 			}
+ 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
+ 				return cliproxyexecutor.Response{}, errCancel
+@@ -836,6 +855,25 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
+ 				} else {
+ 					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
+ 				}
++				resp, errExec = retrySameAuth(execCtx, m, &opts, auth.ID, resp, errExec, func() (cliproxyexecutor.Response, error) {
++					execCtx = newUpstreamAttemptContext(execCtx)
++					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
++					startRetry := time.Now()
++					retryResp, errRetry := executor.CountTokens(execCtx, auth, execReq, execOpts)
++					errRetry = markUpstreamExecutionAttemptFromContext(execCtx, errRetry)
++					if errRetry != nil {
++						if hasUpstreamExecutionAttempt(errRetry) {
++							upstreamErr = errRetry
++						}
++						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, time.Since(startRetry), errRetry)
++					}
++					return retryResp, errRetry
++				})
++				if errExec != nil {
++					if errCtx := execCtx.Err(); errCtx != nil {
++						return cliproxyexecutor.Response{}, errCtx
++					}
++				}
+ 			}
+ 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
+ 				return cliproxyexecutor.Response{}, errCancel
+@@ -1171,7 +1209,15 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
+ 			models = models[:1]
+ 			pooled = false
+ 		}
+-		streamResult, errStream := m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode || selection != nil, selection != nil)
++		runStream := func() (*cliproxyexecutor.StreamResult, error) {
++			return m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode || selection != nil, selection != nil)
++		}
++		streamResult, errStream := runStream()
++		if selection == nil {
++			// executeStreamWithModelPool only fails before any chunk reaches the client,
++			// so repeating it on the same credential is safe.
++			streamResult, errStream = retrySameAuth(execCtx, m, &opts, auth.ID, streamResult, errStream, runStream)
++		}
+ 		if errStream != nil {
+ 			if hasUpstreamExecutionAttempt(errStream) {
+ 				upstreamErr = errStream
+diff --git a/sdk/cliproxy/auth/conductor_same_auth_retry.go b/sdk/cliproxy/auth/conductor_same_auth_retry.go
+new file mode 100644
+index 00000000..d76c7a57
+--- /dev/null
++++ b/sdk/cliproxy/auth/conductor_same_auth_retry.go
+@@ -0,0 +1,96 @@
++package auth
++
++import (
++	"context"
++	"net/http"
++	"time"
++
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++)
++
++// sameAuthRetryBackoff is the wait before each extra attempt on the same credential
++// after a failure that is not the credential's fault. Its length is the number of
++// extra attempts. Tests shorten it.
++var sameAuthRetryBackoff = []time.Duration{500 * time.Millisecond, 1500 * time.Millisecond}
++
++// isNonCredentialUpstreamStatus reports upstream statuses that describe provider or
++// edge trouble rather than a problem with the selected credential.
++func isNonCredentialUpstreamStatus(status int) bool {
++	switch status {
++	case http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout,
++		520, 521, 522, 523, 524, 525, 526, 529:
++		return true
++	default:
++		return false
++	}
++}
++
++// isSameAuthRetryableError reports failures worth repeating on the same credential:
++// pre-response transport errors and provider-side 5xx/529. Credential-scoped and
++// request-scoped failures, and client cancellation, never qualify.
++func isSameAuthRetryableError(err error) bool {
++	if err == nil || isCredentialScopedError(err) || isRequestScopedError(err) || isRequestInvalidError(err) {
++		return false
++	}
++	if status := statusCodeFromError(err); status != 0 {
++		return isNonCredentialUpstreamStatus(status)
++	}
++	return isTransientTransportError(err)
++}
++
++// shouldRetrySameAuth gates same-auth retries to session-affinity routing, where moving
++// a session to another account throws away its per-account prompt cache. Other
++// selectors keep rotating immediately.
++func (m *Manager) shouldRetrySameAuth(ctx context.Context, err error) bool {
++	if m == nil || m.HomeEnabled() || (ctx != nil && ctx.Err() != nil) {
++		return false
++	}
++	if _, ok := m.Selector().(*SessionAffinitySelector); !ok {
++		return false
++	}
++	return isSameAuthRetryableError(err)
++}
++
++// retrySameAuth re-runs attempt on the same credential while it keeps failing with a
++// same-auth-retryable error, waiting sameAuthRetryBackoff between tries. When the retries
++// run out it marks authID in opts so the session binding survives this request rotating
++// away. A context error ends the waits early and is returned as the error.
++//
++// Only the first credential of a request is retried: it is the one holding the session's
++// prompt cache. Once it has been given up on, fallbacks rotate immediately so a
++// provider-wide outage costs one retry budget per request, not one per account.
++func retrySameAuth[T any](ctx context.Context, m *Manager, opts *cliproxyexecutor.Options, authID string, result T, err error, attempt func() (T, error)) (T, error) {
++	if exhausted, _ := opts.Metadata[cliproxyexecutor.SessionAffinityRetryExhaustedMetadataKey].(map[string]struct{}); len(exhausted) > 0 {
++		return result, err
++	}
++	for _, wait := range sameAuthRetryBackoff {
++		if !m.shouldRetrySameAuth(ctx, err) {
++			return result, err
++		}
++		timer := time.NewTimer(wait)
++		select {
++		case <-ctx.Done():
++			timer.Stop()
++			return result, ctx.Err()
++		case <-timer.C:
++		}
++		result, err = attempt()
++	}
++	if m.shouldRetrySameAuth(ctx, err) {
++		excluded, _ := opts.EnsureMetadata()[cliproxyexecutor.SessionAffinityRetryExhaustedMetadataKey].(map[string]struct{})
++		if excluded == nil {
++			excluded = make(map[string]struct{})
++			opts.Metadata[cliproxyexecutor.SessionAffinityRetryExhaustedMetadataKey] = excluded
++		}
++		excluded[authID] = struct{}{}
++	}
++	return result, err
++}
++
++// sameAuthRetryExhausted reports whether authID left this request only because
++// same-auth retries ran out on failures that were not its fault.
++func sameAuthRetryExhausted(metadata map[string]any, authID string) bool {
++	excluded, _ := metadata[cliproxyexecutor.SessionAffinityRetryExhaustedMetadataKey].(map[string]struct{})
++	_, ok := excluded[authID]
++	return ok
++}
+diff --git a/sdk/cliproxy/auth/conductor_same_auth_retry_test.go b/sdk/cliproxy/auth/conductor_same_auth_retry_test.go
+new file mode 100644
+index 00000000..92a567e1
+--- /dev/null
++++ b/sdk/cliproxy/auth/conductor_same_auth_retry_test.go
+@@ -0,0 +1,292 @@
++package auth
++
++import (
++	"context"
++	"errors"
++	"net/http"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/google/uuid"
++	"github.com/router-for-me/CLIProxyAPI/v8/internal/registry"
++	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v8/sdk/cliproxy/executor"
++)
++
++// sameAuthRetryHarness runs requests for one Claude Code session against two claude
++// credentials behind a session-affinity selector and records which auth each upstream
++// call used.
++type sameAuthRetryHarness struct {
++	manager  *Manager
++	selector *SessionAffinitySelector
++	model    string
++	session  string
++
++	mu    sync.Mutex
++	calls []string
++	// fail returns the error for the n-th call (1-based, per auth) since the last reset.
++	fail     func(ctx context.Context, authID string, n int) error
++	perAuthN map[string]int
++}
++
++func newSameAuthRetryHarness(t *testing.T) *sameAuthRetryHarness {
++	t.Helper()
++	withQuotaCooldownEnabled(t)
++	previousBackoff := sameAuthRetryBackoff
++	sameAuthRetryBackoff = []time.Duration{time.Millisecond, time.Millisecond}
++	t.Cleanup(func() { sameAuthRetryBackoff = previousBackoff })
++
++	h := &sameAuthRetryHarness{
++		model:    "claude-same-auth-" + uuid.NewString(),
++		session:  uuid.NewString(),
++		perAuthN: make(map[string]int),
++	}
++	h.selector = NewSessionAffinitySelector(&RoundRobinSelector{})
++	t.Cleanup(h.selector.Stop)
++	h.manager = NewManager(nil, h.selector, nil)
++	h.manager.SetRetryConfig(0, 0, 0)
++	for _, id := range []string{"same-auth-a-" + uuid.NewString(), "same-auth-b-" + uuid.NewString()} {
++		registry.GetGlobalRegistry().RegisterClient(id, "claude", []*registry.ModelInfo{{ID: h.model}})
++		t.Cleanup(func() { registry.GetGlobalRegistry().UnregisterClient(id) })
++		if _, errRegister := h.manager.Register(context.Background(), &Auth{ID: id, Provider: "claude", Status: StatusActive}); errRegister != nil {
++			t.Fatalf("register %s: %v", id, errRegister)
++		}
++	}
++	attempt := func(ctx context.Context, auth *Auth) error {
++		h.mu.Lock()
++		h.calls = append(h.calls, auth.ID)
++		h.perAuthN[auth.ID]++
++		n, fail := h.perAuthN[auth.ID], h.fail
++		h.mu.Unlock()
++		if fail != nil {
++			return fail(ctx, auth.ID, n)
++		}
++		return nil
++	}
++	h.manager.RegisterExecutor(&customStreamMockExecutor{
++		identifier: "claude",
++		mockCustomErrorExecutor: mockCustomErrorExecutor{executeFn: func(ctx context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
++			if errAttempt := attempt(ctx, auth); errAttempt != nil {
++				return cliproxyexecutor.Response{}, errAttempt
++			}
++			return cliproxyexecutor.Response{Payload: []byte(auth.ID)}, nil
++		}},
++		streamFn: func(ctx context.Context, auth *Auth, _ cliproxyexecutor.Request, _ cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
++			if errAttempt := attempt(ctx, auth); errAttempt != nil {
++				return nil, errAttempt
++			}
++			chunks := make(chan cliproxyexecutor.StreamChunk, 1)
++			chunks <- cliproxyexecutor.StreamChunk{Payload: []byte(auth.ID)}
++			close(chunks)
++			return &cliproxyexecutor.StreamResult{Chunks: chunks}, nil
++		},
++	})
++	return h
++}
++
++// run sends one request on the harness session and returns the auth that served it.
++func (h *sameAuthRetryHarness) run(ctx context.Context, stream bool) (string, error) {
++	opts := cliproxyexecutor.Options{Headers: http.Header{"X-Claude-Code-Session-Id": []string{h.session}}}
++	req := cliproxyexecutor.Request{Model: h.model}
++	if !stream {
++		resp, errExecute := h.manager.Execute(ctx, []string{"claude"}, req, opts)
++		return string(resp.Payload), errExecute
++	}
++	opts.Stream = true
++	result, errStream := h.manager.ExecuteStream(ctx, []string{"claude"}, req, opts)
++	if errStream != nil {
++		return "", errStream
++	}
++	var payload []byte
++	for chunk := range result.Chunks {
++		if chunk.Err != nil {
++			return "", chunk.Err
++		}
++		payload = append(payload, chunk.Payload...)
++	}
++	return string(payload), nil
++}
++
++func (h *sameAuthRetryHarness) reset(fail func(ctx context.Context, authID string, n int) error) {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	h.calls = nil
++	h.perAuthN = make(map[string]int)
++	h.fail = fail
++}
++
++func (h *sameAuthRetryHarness) recordedCalls() []string {
++	h.mu.Lock()
++	defer h.mu.Unlock()
++	return append([]string(nil), h.calls...)
++}
++
++// boundAuth returns the single auth the session cache points at.
++func (h *sameAuthRetryHarness) boundAuth(t *testing.T) string {
++	t.Helper()
++	h.selector.cache.mu.RLock()
++	defer h.selector.cache.mu.RUnlock()
++	bound := ""
++	for _, entry := range h.selector.cache.entries {
++		if bound != "" && entry.authID != bound {
++			t.Fatalf("session bound to several auths: %s and %s", bound, entry.authID)
++		}
++		bound = entry.authID
++	}
++	return bound
++}
++
++func (h *sameAuthRetryHarness) otherAuth(authID string) string {
++	for _, auth := range h.manager.List() {
++		if auth.ID != authID {
++			return auth.ID
++		}
++	}
++	return ""
++}
++
++func TestSameAuthRetryPreservesSessionBinding(t *testing.T) {
++	transportErr := dialRefusedError()
++	overloaded := customStatusError{code: 529, msg: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`}
++	unifiedRejection := streamQuotaError{customStatusError: customStatusError{code: http.StatusTooManyRequests, msg: "rate_limit_error"}, credentialScoped: true}
++
++	cases := []struct {
++		name string
++		// boundErr is returned by the bound auth on its n-th call; nil means success.
++		boundErr       func(n int) error
++		wantBoundCalls int
++		wantFallback   bool
++		wantRebind     bool
++		wantNoCooldown bool
++	}{
++		{
++			name:           "transport error then success retries same auth",
++			boundErr:       func(n int) error { return map[bool]error{true: transportErr}[n == 1] },
++			wantBoundCalls: 2,
++			wantNoCooldown: true,
++		},
++		{
++			name:           "529 then success retries same auth without cooldown",
++			boundErr:       func(n int) error { return map[bool]error{true: overloaded}[n == 1] },
++			wantBoundCalls: 2,
++			wantNoCooldown: true,
++		},
++		{
++			name:           "persistent transport failure rotates without rebinding",
++			boundErr:       func(int) error { return transportErr },
++			wantBoundCalls: 1 + len(sameAuthRetryBackoff),
++			wantFallback:   true,
++			wantNoCooldown: true,
++		},
++		{
++			name:           "credential-scoped 429 rotates and rebinds",
++			boundErr:       func(int) error { return unifiedRejection },
++			wantBoundCalls: 1,
++			wantFallback:   true,
++			wantRebind:     true,
++		},
++	}
++	for _, path := range []string{"execute", "stream"} {
++		for _, tc := range cases {
++			t.Run(path+"/"+tc.name, func(t *testing.T) {
++				h := newSameAuthRetryHarness(t)
++				stream := path == "stream"
++				ctx := context.Background()
++
++				warm, errWarm := h.run(ctx, stream)
++				if errWarm != nil {
++					t.Fatalf("warm-up request: %v", errWarm)
++				}
++				if got := h.boundAuth(t); got != warm {
++					t.Fatalf("warm-up bound session to %q, want %q", got, warm)
++				}
++				other := h.otherAuth(warm)
++
++				h.reset(func(_ context.Context, authID string, n int) error {
++					if authID != warm {
++						return nil
++					}
++					return tc.boundErr(n)
++				})
++				served, errRun := h.run(ctx, stream)
++				if errRun != nil {
++					t.Fatalf("request error = %v, calls=%v", errRun, h.recordedCalls())
++				}
++
++				wantCalls := make([]string, 0, tc.wantBoundCalls+1)
++				for range tc.wantBoundCalls {
++					wantCalls = append(wantCalls, warm)
++				}
++				wantServed := warm
++				if tc.wantFallback {
++					wantCalls = append(wantCalls, other)
++					wantServed = other
++				}
++				if calls := h.recordedCalls(); !equalSessionAliases(calls, wantCalls) {
++					t.Fatalf("upstream calls = %v, want %v", calls, wantCalls)
++				}
++				if served != wantServed {
++					t.Fatalf("served by %q, want %q", served, wantServed)
++				}
++				wantBound := warm
++				if tc.wantRebind {
++					wantBound = other
++				}
++				if got := h.boundAuth(t); got != wantBound {
++					t.Fatalf("session bound to %q after request, want %q", got, wantBound)
++				}
++				if tc.wantNoCooldown {
++					assertNoCooldown(t, h.manager, warm, h.model)
++				}
++			})
++		}
++	}
++}
++
++func TestSameAuthRetrySkipsClientCancellation(t *testing.T) {
++	for _, stream := range []bool{false, true} {
++		h := newSameAuthRetryHarness(t)
++		ctx, cancel := context.WithCancel(context.Background())
++		h.reset(func(context.Context, string, int) error {
++			cancel()
++			return context.Canceled
++		})
++		if _, errRun := h.run(ctx, stream); !errors.Is(errRun, context.Canceled) {
++			t.Fatalf("stream=%t: error = %v, want context.Canceled", stream, errRun)
++		}
++		if calls := h.recordedCalls(); len(calls) != 1 {
++			t.Fatalf("stream=%t: upstream calls = %v, want exactly one", stream, calls)
++		}
++		cancel()
++	}
++}
++
++// When every account fails for provider-side reasons, only the bound (cache-holding)
++// account spends the retry budget; the fallback is tried once.
++func TestSameAuthRetryOnlyRetriesTheFirstCredential(t *testing.T) {
++	overloaded := customStatusError{code: 529, msg: `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`}
++	for _, stream := range []bool{false, true} {
++		h := newSameAuthRetryHarness(t)
++		ctx := context.Background()
++		warm, errWarm := h.run(ctx, stream)
++		if errWarm != nil {
++			t.Fatalf("stream=%t: warm-up request: %v", stream, errWarm)
++		}
++		other := h.otherAuth(warm)
++		h.reset(func(context.Context, string, int) error { return overloaded })
++		if _, errRun := h.run(ctx, stream); errRun == nil {
++			t.Fatalf("stream=%t: expected the request to fail when every account is overloaded", stream)
++		}
++		wantCalls := make([]string, 0, len(sameAuthRetryBackoff)+2)
++		for range 1 + len(sameAuthRetryBackoff) {
++			wantCalls = append(wantCalls, warm)
++		}
++		wantCalls = append(wantCalls, other)
++		if calls := h.recordedCalls(); !equalSessionAliases(calls, wantCalls) {
++			t.Fatalf("stream=%t: upstream calls = %v, want %v", stream, calls, wantCalls)
++		}
++		if got := h.boundAuth(t); got != warm {
++			t.Fatalf("stream=%t: session bound to %q after outage, want %q", stream, got, warm)
++		}
++	}
++}
+diff --git a/sdk/cliproxy/auth/selector.go b/sdk/cliproxy/auth/selector.go
+index bece8ec2..4afab8d2 100644
+--- a/sdk/cliproxy/auth/selector.go
++++ b/sdk/cliproxy/auth/selector.go
+@@ -977,6 +977,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
+ 	}
+ 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
+ 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
++	delete(opts.Metadata, cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey)
+ 
+ 	// Explicit harness identities are absolute authority. The LCP matcher is only
+ 	// consulted when no header, body, or execution-session identity is present.
+@@ -1072,6 +1073,13 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
+ 		if auth == nil {
+ 			return nil, nil
+ 		}
++		if sameAuthRetryExhausted(opts.Metadata, cachedAuthID) {
++			// The bound auth is only out of this request after same-auth retries on
++			// non-credential failures; keep the session on it for later requests.
++			opts.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey] = true
++			entry.Infof("session-affinity: bound auth retries exhausted, serving request from fallback without rebinding | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), cachedAuthID, auth.ID, provider, model)
++			return auth, nil
++		}
+ 		bind(auth.ID)
+ 		entry.Infof("session-affinity: cache hit but auth unavailable, reselected | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
+ 		return auth, nil
+@@ -1143,7 +1151,8 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
+ 		return nil, true, errAvailable
+ 	}
+ 
+-	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
++	match, matched := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength)
++	if matched {
+ 		for _, auth := range available {
+ 			if auth == nil || auth.ID != match.AuthID {
+ 				continue
+@@ -1194,6 +1203,11 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
+ 	if auth == nil {
+ 		return nil, true, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
+ 	}
++	if matched && sameAuthRetryExhausted(opts.Metadata, match.AuthID) {
++		opts.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey] = true
++		entry.Infof("session-affinity: LCP bound auth retries exhausted, serving request from fallback without rebinding | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(match.SessionID), match.AuthID, auth.ID, provider, model)
++		return auth, true, nil
++	}
+ 	if bindRes := s.matcher.BindFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength, auth.ID); bindRes.SessionID != "" {
+ 		opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] = bindRes.SessionID
+ 		opts.Metadata[cliproxyexecutor.CanonicalSessionIDMetadataKey] = bindRes.SessionID
+@@ -1459,6 +1473,11 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
+ 	if s == nil || res.AuthID == "" {
+ 		return
+ 	}
++	if transient, _ := res.Options.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey].(bool); transient {
++		// Pick served this attempt from a fallback while the session stays bound to
++		// an auth that only failed for reasons outside the credential.
++		return
++	}
+ 
+ 	explicitID, explicitFallbackID := extractExplicitSessionIDs(res.Options.Headers, res.Options.OriginalRequest, res.Options.Metadata)
+ 	if explicitID != "" {
+@@ -1476,9 +1495,11 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
+ 		nsModel = canonicalModelKey(raw)
+ 	}
+ 
+-	if res.Error != nil && shouldSkipCredentialCooldown(res.Error) {
+-		// Request-scoped or caller-attributed failures are not evidence that the
+-		// selected credential is unhealthy, so preserve both explicit and LCP bindings.
++	if res.Error != nil && (shouldSkipCredentialCooldown(res.Error) ||
++		(res.Error.Code != ErrorCodeForceCooldown && isNonCredentialUpstreamStatus(statusCodeFromResult(res.Error)))) {
++		// Request-scoped, caller-attributed, and provider-side 5xx/529 failures are not
++		// evidence that the selected credential is unhealthy, so preserve both explicit
++		// and LCP bindings. A 5xx model cooldown still steers Pick away while it lasts.
+ 		return
+ 	}
+ 
+diff --git a/sdk/cliproxy/auth/session_affinity_metadata_test.go b/sdk/cliproxy/auth/session_affinity_metadata_test.go
+index 46054214..0aa0f7f3 100644
+--- a/sdk/cliproxy/auth/session_affinity_metadata_test.go
++++ b/sdk/cliproxy/auth/session_affinity_metadata_test.go
+@@ -20,11 +20,11 @@ type failExecutor struct {
+ func (e *failExecutor) Identifier() string { return e.provider }
+ func (e *failExecutor) Execute(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+ 	e.calls.Add(1)
+-	return cliproxyexecutor.Response{}, &Error{HTTPStatus: http.StatusInternalServerError, Message: "upstream failure"}
++	return cliproxyexecutor.Response{}, &Error{HTTPStatus: http.StatusForbidden, Message: "upstream failure"}
+ }
+ func (e *failExecutor) ExecuteStream(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {
+ 	e.calls.Add(1)
+-	return nil, &Error{HTTPStatus: http.StatusInternalServerError, Message: "upstream failure"}
++	return nil, &Error{HTTPStatus: http.StatusForbidden, Message: "upstream failure"}
+ }
+ func (e *failExecutor) Refresh(ctx context.Context, auth *Auth) (*Auth, error) { return auth, nil }
+ func (e *failExecutor) CountTokens(ctx context.Context, auth *Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {
+@@ -253,7 +253,7 @@ func TestSessionAffinityOnResultWithMismatchedNamespaceFailsToUnbind(t *testing.
+ 		Provider: "gemini", // actual provider
+ 		Model:    model,
+ 		Success:  false,
+-		Error:    &Error{HTTPStatus: http.StatusInternalServerError},
++		Error:    &Error{HTTPStatus: http.StatusForbidden},
+ 		Options: cliproxyexecutor.Options{
+ 			Headers: http.Header{"X-Session-Id": []string{"sess-ns-1"}},
+ 			Metadata: map[string]any{
+diff --git a/sdk/cliproxy/executor/types.go b/sdk/cliproxy/executor/types.go
+index d178957d..e6f6d173 100644
+--- a/sdk/cliproxy/executor/types.go
++++ b/sdk/cliproxy/executor/types.go
+@@ -84,6 +84,15 @@ const (
+ 	SessionAffinityProviderMetadataKey = "session_affinity_provider"
+ 	// SessionAffinityModelMetadataKey carries the model used during session affinity selection.
+ 	SessionAffinityModelMetadataKey = "session_affinity_model"
++	// SessionAffinityRetryExhaustedMetadataKey holds a map[string]struct{} of auth IDs that
++	// left the current request only after same-auth retries ran out on failures that are
++	// not the credential's fault (transport errors, 529, 5xx). SessionAffinitySelector keeps
++	// a session bound to such an auth instead of re-pinning it to this request's fallback.
++	SessionAffinityRetryExhaustedMetadataKey = "session_affinity_retry_exhausted"
++	// SessionAffinityTransientFallbackMetadataKey is set by SessionAffinitySelector.Pick when
++	// it served the attempt from a fallback auth without rebinding the session, so OnResult
++	// must not record a binding for that auth either.
++	SessionAffinityTransientFallbackMetadataKey = "session_affinity_transient_fallback"
+ )
+ 
+ // Request encapsulates the translated payload that will be sent to a provider executor.

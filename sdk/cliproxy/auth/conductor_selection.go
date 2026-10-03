@@ -428,10 +428,17 @@ func (m *Manager) SetSelector(selector Selector) {
 		m.mu.Unlock()
 		return
 	}
+	// Carry session bindings across routing reloads so warm sessions keep their accounts.
+	adopted := false
+	if next, ok := selector.(*SessionAffinitySelector); ok {
+		if prev, okPrev := oldSelector.(*SessionAffinitySelector); okPrev {
+			adopted = next.adoptBindings(prev)
+		}
+	}
 	m.selector = selector
 	m.mu.Unlock()
 
-	if oldSelector != nil {
+	if oldSelector != nil && !adopted {
 		if stoppable, ok := oldSelector.(StoppableSelector); ok {
 			stoppable.Stop()
 		}
