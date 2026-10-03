@@ -1,0 +1,45 @@
+patches-rafay/README.md
+  s_4f76173e1cf9cc::t_8bc151d18eb77c 1-73
+patches-rafay/0001-same-account-retry.patch
+  s_4f76173e1cf9cc::t_feb7e812f83551 1-616
+patches-rafay/0002-keep-bindings-on-reload.patch
+  s_4f76173e1cf9cc::t_f91ac554fe9f20 1-157
+sdk/cliproxy/auth/conductor_cooldown.go
+  s_4f76173e1cf9cc::t_d7d9d4142deeb8 1509-1510,1515-1516
+sdk/cliproxy/auth/conductor_execution.go
+  s_4f76173e1cf9cc::t_5b908d073c4183 627-645,858-876,1212-1220
+sdk/cliproxy/auth/conductor_same_auth_retry.go
+  s_4f76173e1cf9cc::t_9fbad17e48466d 1-96
+sdk/cliproxy/auth/conductor_same_auth_retry_test.go
+  s_4f76173e1cf9cc::t_07eb554fb7f6db 1-292
+sdk/cliproxy/auth/conductor_selection.go
+  s_4f76173e1cf9cc::t_79e965698cb284 431-437,441
+sdk/cliproxy/auth/selector.go
+  s_4f76173e1cf9cc::t_0c3d8b4670e6c2 980,1076-1082,1154-1155,1206-1210,1344-1364,1497-1501,1519-1523
+sdk/cliproxy/auth/selector_reload_bindings_test.go
+  s_4f76173e1cf9cc::t_715c7bbf44fb44 1-48
+sdk/cliproxy/auth/session_affinity_metadata_test.go
+  s_4f76173e1cf9cc::t_5853c727d9a239 23,27,256
+sdk/cliproxy/auth/session_cache.go
+  s_4f76173e1cf9cc::t_332b44524dc340 410-420,422,424
+sdk/cliproxy/executor/types.go
+  s_4f76173e1cf9cc::t_07d490b9c1ee0c 87-95
+sdk/cliproxy/session/lcp.go
+  s_4f76173e1cf9cc::t_68fd43d1dbd63f 736-746
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e2a0cfc049af10e88d390426f1b62014a334ea02",
+  "prompts": {},
+  "sessions": {
+    "s_4f76173e1cf9cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "720b89d8-2aa2-47d9-bf4f-d7ec17e8db84",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Abdul Rafay <99marafay@gmail.com>"
+    }
+  }
+}
