@@ -407,8 +407,21 @@ func (c *SessionCache) Stop() {
 	})
 }
 
+// setTTL changes the lifetime applied when bindings are next set or refreshed.
+// Existing bindings keep their current expiry until touched.
+func (c *SessionCache) setTTL(ttl time.Duration) {
+	if c == nil || ttl <= 0 {
+		return
+	}
+	c.mu.Lock()
+	c.ttl = ttl
+	c.mu.Unlock()
+}
+
 func (c *SessionCache) cleanupLoop() {
+	c.mu.RLock()
 	interval := c.ttl / 2
+	c.mu.RUnlock()
 	if interval < time.Millisecond {
 		interval = time.Millisecond
 	}

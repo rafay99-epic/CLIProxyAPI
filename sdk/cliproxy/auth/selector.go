@@ -977,6 +977,7 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 	}
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
+	delete(opts.Metadata, cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey)
 
 	// Explicit harness identities are absolute authority. The LCP matcher is only
 	// consulted when no header, body, or execution-session identity is present.
@@ -1072,6 +1073,13 @@ func (s *SessionAffinitySelector) Pick(ctx context.Context, provider, model stri
 		if auth == nil {
 			return nil, nil
 		}
+		if sameAuthRetryExhausted(opts.Metadata, cachedAuthID) {
+			// The bound auth is only out of this request after same-auth retries on
+			// non-credential failures; keep the session on it for later requests.
+			opts.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey] = true
+			entry.Infof("session-affinity: bound auth retries exhausted, serving request from fallback without rebinding | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), cachedAuthID, auth.ID, provider, model)
+			return auth, nil
+		}
 		bind(auth.ID)
 		entry.Infof("session-affinity: cache hit but auth unavailable, reselected | session=%s auth=%s provider=%s model=%s", truncateSessionID(primaryID), auth.ID, provider, model)
 		return auth, nil
@@ -1143,7 +1151,8 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 		return nil, true, errAvailable
 	}
 
-	if match, ok := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength); ok {
+	match, matched := s.matcher.MatchFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength)
+	if matched {
 		for _, auth := range available {
 			if auth == nil || auth.ID != match.AuthID {
 				continue
@@ -1193,6 +1202,11 @@ func (s *SessionAffinitySelector) pickLCP(ctx context.Context, provider, model s
 	}
 	if auth == nil {
 		return nil, true, &Error{Code: "auth_not_found", Message: "selector returned no auth"}
+	}
+	if matched && sameAuthRetryExhausted(opts.Metadata, match.AuthID) {
+		opts.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey] = true
+		entry.Infof("session-affinity: LCP bound auth retries exhausted, serving request from fallback without rebinding | session=%s bound=%s auth=%s provider=%s model=%s", truncateSessionID(match.SessionID), match.AuthID, auth.ID, provider, model)
+		return auth, true, nil
 	}
 	if bindRes := s.matcher.BindFingerprintsWithContext(namespace, fingerprints, tailFingerprints, envDigest, minPrefixLength, auth.ID); bindRes.SessionID != "" {
 		opts.Metadata[cliproxyexecutor.LCPAffinitySessionIDMetadataKey] = bindRes.SessionID
@@ -1327,6 +1341,27 @@ func truncateSessionID(id string) string {
 	return id[:8] + "..."
 }
 
+// adoptBindings makes s take over prev's session cache and LCP matcher so a routing
+// reload keeps warm sessions on their accounts; the adopted state switches to s's TTL.
+// It only adopts into a selector whose cache is still empty and must run before s is
+// published. When it returns true, prev must not be stopped.
+func (s *SessionAffinitySelector) adoptBindings(prev *SessionAffinitySelector) bool {
+	if s == nil || prev == nil || s == prev || s.cache == nil || prev.cache == nil || s.cache.Len() > 0 {
+		return false
+	}
+	s.cache.mu.RLock()
+	ttl := s.cache.ttl
+	s.cache.mu.RUnlock()
+	s.cache.Stop()
+	s.cache = prev.cache
+	s.cache.setTTL(ttl)
+	if prev.matcher != nil {
+		s.matcher = prev.matcher
+		s.matcher.SetTTL(ttl)
+	}
+	return true
+}
+
 // Stop releases resources held by the selector.
 func (s *SessionAffinitySelector) Stop() {
 	if s == nil {
@@ -1459,6 +1494,11 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 	if s == nil || res.AuthID == "" {
 		return
 	}
+	if transient, _ := res.Options.Metadata[cliproxyexecutor.SessionAffinityTransientFallbackMetadataKey].(bool); transient {
+		// Pick served this attempt from a fallback while the session stays bound to
+		// an auth that only failed for reasons outside the credential.
+		return
+	}
 
 	explicitID, explicitFallbackID := extractExplicitSessionIDs(res.Options.Headers, res.Options.OriginalRequest, res.Options.Metadata)
 	if explicitID != "" {
@@ -1476,9 +1516,11 @@ func (s *SessionAffinitySelector) OnResult(res Result) {
 		nsModel = canonicalModelKey(raw)
 	}
 
-	if res.Error != nil && shouldSkipCredentialCooldown(res.Error) {
-		// Request-scoped or caller-attributed failures are not evidence that the
-		// selected credential is unhealthy, so preserve both explicit and LCP bindings.
+	if res.Error != nil && (shouldSkipCredentialCooldown(res.Error) ||
+		(res.Error.Code != ErrorCodeForceCooldown && isNonCredentialUpstreamStatus(statusCodeFromResult(res.Error)))) {
+		// Request-scoped, caller-attributed, and provider-side 5xx/529 failures are not
+		// evidence that the selected credential is unhealthy, so preserve both explicit
+		// and LCP bindings. A 5xx model cooldown still steers Pick away while it lasts.
 		return
 	}
 

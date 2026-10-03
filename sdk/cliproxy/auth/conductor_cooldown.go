@@ -1506,12 +1506,14 @@ func resultErrorFromError(err error) *Error {
 
 // shouldSkipCredentialCooldown reports failures that must not mark auth/model cooling.
 // Connection lifecycle is intentionally separate from request_scoped so transport
-// drops do not also stop credential rotation via isRequestInvalidError.
+// drops do not also stop credential rotation via isRequestInvalidError. HTTP 529
+// (Anthropic overloaded_error) is provider-wide, so it never cools one credential.
 func shouldSkipCredentialCooldown(err *Error) bool {
 	if err != nil && err.Code == ErrorCodeForceCooldown {
 		return false
 	}
-	return isRequestScopedResultError(err) || isConnectionLifecycleResultError(err) || isTransientTransportResultError(err)
+	return isRequestScopedResultError(err) || isConnectionLifecycleResultError(err) || isTransientTransportResultError(err) ||
+		statusCodeFromResult(err) == 529
 }
 
 // isConnectionLifecycleError reports transport/session lifecycle failures that must

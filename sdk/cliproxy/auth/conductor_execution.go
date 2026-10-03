@@ -624,6 +624,25 @@ func (m *Manager) executeMixedOnce(ctx context.Context, providers []string, req 
 				} else {
 					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
 				}
+				resp, errExec = retrySameAuth(execCtx, m, &opts, auth.ID, resp, errExec, func() (cliproxyexecutor.Response, error) {
+					execCtx = newUpstreamAttemptContext(execCtx)
+					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
+					startRetry := time.Now()
+					retryResp, errRetry := executor.Execute(execCtx, auth, execReq, execOpts)
+					errRetry = markUpstreamExecutionAttemptFromContext(execCtx, errRetry)
+					if errRetry != nil {
+						if hasUpstreamExecutionAttempt(errRetry) {
+							upstreamErr = errRetry
+						}
+						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, time.Since(startRetry), errRetry)
+					}
+					return retryResp, errRetry
+				})
+				if errExec != nil {
+					if errCtx := execCtx.Err(); errCtx != nil {
+						return cliproxyexecutor.Response{}, errCtx
+					}
+				}
 			}
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
 				return cliproxyexecutor.Response{}, errCancel
@@ -835,6 +854,25 @@ func (m *Manager) executeCountMixedOnce(ctx context.Context, providers []string,
 					}
 				} else {
 					warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, durationExec, errExec)
+				}
+				resp, errExec = retrySameAuth(execCtx, m, &opts, auth.ID, resp, errExec, func() (cliproxyexecutor.Response, error) {
+					execCtx = newUpstreamAttemptContext(execCtx)
+					execCtx = syncMetadataSessionToContext(execCtx, execOpts.Metadata)
+					startRetry := time.Now()
+					retryResp, errRetry := executor.CountTokens(execCtx, auth, execReq, execOpts)
+					errRetry = markUpstreamExecutionAttemptFromContext(execCtx, errRetry)
+					if errRetry != nil {
+						if hasUpstreamExecutionAttempt(errRetry) {
+							upstreamErr = errRetry
+						}
+						warnLogUpstreamFailure(execCtx, entry, provider, upstreamModel, auth, time.Since(startRetry), errRetry)
+					}
+					return retryResp, errRetry
+				})
+				if errExec != nil {
+					if errCtx := execCtx.Err(); errCtx != nil {
+						return cliproxyexecutor.Response{}, errCtx
+					}
 				}
 			}
 			if errCancel := claudeOAuthRequestCancellation(execCtx, auth, errExec); errCancel != nil {
@@ -1171,7 +1209,15 @@ func (m *Manager) executeStreamMixedOnce(ctx context.Context, providers []string
 			models = models[:1]
 			pooled = false
 		}
-		streamResult, errStream := m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode || selection != nil, selection != nil)
+		runStream := func() (*cliproxyexecutor.StreamResult, error) {
+			return m.executeStreamWithModelPool(execCtx, executor, auth, provider, execReq, execOpts, routeModel, streamExecutionModel, models, pooled, aliasResult, routing, !homeMode || selection != nil, selection != nil)
+		}
+		streamResult, errStream := runStream()
+		if selection == nil {
+			// executeStreamWithModelPool only fails before any chunk reaches the client,
+			// so repeating it on the same credential is safe.
+			streamResult, errStream = retrySameAuth(execCtx, m, &opts, auth.ID, streamResult, errStream, runStream)
+		}
 		if errStream != nil {
 			if hasUpstreamExecutionAttempt(errStream) {
 				upstreamErr = errStream

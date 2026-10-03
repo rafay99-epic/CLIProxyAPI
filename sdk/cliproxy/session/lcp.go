@@ -733,6 +733,17 @@ func NewMerklePrefixMatcherWithConfig(cfg MerklePrefixMatcherConfig) *MerklePref
 	}
 }
 
+// SetTTL changes the lifetime applied when bindings are next created or refreshed.
+// Existing bindings keep their current expiry until touched.
+func (m *MerklePrefixMatcher) SetTTL(ttl time.Duration) {
+	if m == nil || ttl <= 0 {
+		return
+	}
+	m.mu.Lock()
+	m.ttl = ttl
+	m.mu.Unlock()
+}
+
 func (m *MerklePrefixMatcher) now() time.Time {
 	if m != nil && m.nowFunc != nil {
 		return m.nowFunc()
