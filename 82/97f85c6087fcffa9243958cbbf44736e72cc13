@@ -1,0 +1,237 @@
+AGENTS.md
+  s_ea88183301aa81::t_42d812e6a7d474 53
+internal/api/server_model_detail_test.go
+  s_ea88183301aa81::t_a4a637987185cc 1-132
+internal/api/server_routes.go
+  s_ea88183301aa81::t_7ae879c9a7926e 67-70
+internal/cache/antigravity_interactions_session.go
+  s_ea88183301aa81::t_7283669547bb80 1-76
+internal/cache/antigravity_interactions_session_test.go
+  s_ea88183301aa81::t_d4d468d2ed9568 1-56
+internal/pluginhost/adapters.go
+  s_ea88183301aa81::t_dbd3d12463e3b7 304-337,347,350
+internal/pluginhost/auth_model_provider_test.go
+  s_ea88183301aa81::t_370fdd8b3c6a74 1-74
+internal/registry/model_registry.go
+  s_ea88183301aa81::t_0ec4ef1cd88551 437-457,496-501,503-505,589,600,640-642,737-738,745
+internal/registry/model_registry_replace_test.go
+  s_ea88183301aa81::t_0459962b770bb8 1-84
+internal/registry/model_updater.go
+  s_ea88183301aa81::t_57c5939b9c7891 20,23-25
+internal/registry/models/models.json
+  s_ea88183301aa81::t_de204a35cfe294 3981-4028
+internal/runtime/executor/aistudio_executor.go
+  s_ea88183301aa81::t_4668d0fc63db6b 560-565
+internal/runtime/executor/aistudio_executor_test.go
+  s_ea88183301aa81::t_56578f526e462b 66,81-82
+internal/runtime/executor/antigravity_caqs_replay_test.go
+  s_ea88183301aa81::t_b421a008895486 1-145
+internal/runtime/executor/antigravity_executor_execute.go
+  s_ea88183301aa81::t_cd6b876971a69b 95,303
+internal/runtime/executor/antigravity_executor_request.go
+  s_ea88183301aa81::t_1d73aa1a3024f8 86,99
+internal/runtime/executor/antigravity_executor_stream.go
+  s_ea88183301aa81::t_935a0c7bd04c6f 94
+internal/runtime/executor/antigravity_executor_tokens.go
+  s_ea88183301aa81::t_ca76c31be36475 54,93
+internal/runtime/executor/claude_cloaked_date_pin_test.go
+  s_ea88183301aa81::t_450014fb8f2af3 234-235,272,313,335-337,339-340
+internal/runtime/executor/claude_executor_cloaking.go
+  s_ea88183301aa81::t_300185624aa227 1275-1276,1285,1298
+internal/runtime/executor/claude_executor_execute.go
+  s_ea88183301aa81::t_350988718de031 93,183,216,222-239
+internal/runtime/executor/claude_executor_stream.go
+  s_ea88183301aa81::t_8811c94a5fa0a5 96,211,217-234
+internal/runtime/executor/claude_executor_test.go
+  s_ea88183301aa81::t_a5e3b5a53df798 2974,3051-3052,5652,5699-5700,5702-5703,5705,5708,5755-5756,5758-5759,5761,5819,5871-5872,5874-5875,5877,5880,5927-5928,5933,5976-5977,5979-5980,5982-5983,5985,5988,6031-6032,6127,6170-6171,6173-6176,6179,6222-6223,6225-6226,6228,6283,6326-6327,6331,6374-6375,6422-6423,6427,6473-6475,6582,6640-6641,6645,6689-6690,6692-6695,6842,6883-6884,8540,8564,8792-8793
+internal/runtime/executor/claude_executor_tokens.go
+  s_ea88183301aa81::t_9ed98adf6f96ae 42-45,55,152-155,229
+internal/runtime/executor/claude_mid_system_model_test.go
+  s_ea88183301aa81::t_287827d1b0f0f2 174,185,194,216-218,259-260,470-525
+internal/runtime/executor/codex_executor_execute.go
+  s_ea88183301aa81::t_f2f197bc1302f2 55,236
+internal/runtime/executor/codex_executor_request.go
+  s_ea88183301aa81::t_e3eb301ff25491 138
+internal/runtime/executor/codex_executor_stream.go
+  s_ea88183301aa81::t_8bde432f919723 60
+internal/runtime/executor/codex_executor_tokens.go
+  s_ea88183301aa81::t_690ca5e23150c0 25-28,44
+internal/runtime/executor/codex_openai_images.go
+  s_ea88183301aa81::t_94d99c30bf54ba 113-115,211-213,343-351,410-418
+internal/runtime/executor/codex_websockets_connection.go
+  s_ea88183301aa81::t_082b293c3e15bf 135-139
+internal/runtime/executor/codex_websockets_duplex.go
+  s_ea88183301aa81::t_f0ce7126bb6efd 15,204,281-285,304
+internal/runtime/executor/codex_websockets_execute.go
+  s_ea88183301aa81::t_8069989ca67e81 55,84,117,228
+internal/runtime/executor/codex_websockets_stream.go
+  s_ea88183301aa81::t_d130841c78836d 78,196,777,803
+internal/runtime/executor/devin_executor.go
+  s_ea88183301aa81::t_763949c0f6295a 447-455
+internal/runtime/executor/gemini_executor.go
+  s_ea88183301aa81::t_321b12a8d55f9f 187,306,443,447,496,530,534,613,689-692,711
+internal/runtime/executor/gemini_executor_test.go
+  s_ea88183301aa81::t_0afb549ee7d35b 248,284-285,287-288
+internal/runtime/executor/gemini_interactions_continuation_test.go
+  s_ea88183301aa81::t_271b5b32606314 1-119
+internal/runtime/executor/gemini_interactions_tool_names_test.go
+  s_ea88183301aa81::t_9ce78747c346e3 1-68
+internal/runtime/executor/gemini_vertex_executor.go
+  s_ea88183301aa81::t_d3fd8d732598fb 316,325-331,342,374,514,634,805,933-936,956,1032-1035,1058
+internal/runtime/executor/helps/antigravity_interactions_state.go
+  s_ea88183301aa81::t_5939ad6c5753b9 1-159
+internal/runtime/executor/helps/antigravity_interactions_state_test.go
+  s_ea88183301aa81::t_d816fbd1a7c052 1-74
+internal/runtime/executor/helps/devin_payload.go
+  s_ea88183301aa81::t_888bdb7d1a8780 1-227
+internal/runtime/executor/helps/payload_finalizer.go
+  s_ea88183301aa81::t_c44ff4ffd40d08 1-38
+internal/runtime/executor/helps/payload_finalizer_test.go
+  s_ea88183301aa81::t_9eafa671b94ba3 1-122
+internal/runtime/executor/helps/payload_media.go
+  s_ea88183301aa81::t_7eeb9e77ba505f 1-120
+internal/runtime/executor/kimi_executor.go
+  s_ea88183301aa81::t_ac00e6bfafc568 163,302,452,584
+internal/runtime/executor/meta_executor_execute.go
+  s_ea88183301aa81::t_d83f9ef3d229f6 75
+internal/runtime/executor/openai_compat_executor.go
+  s_ea88183301aa81::t_5302a2b8522ef1 148,243-246,370,616-619,728-731,740
+internal/runtime/executor/payload_barrier_test.go
+  s_ea88183301aa81::t_4cd3b817f57212 1-184
+internal/runtime/executor/payload_review_test.go
+  s_ea88183301aa81::t_d1cd77eac31d6a 1-203
+internal/runtime/executor/xai_executor_execute.go
+  s_ea88183301aa81::t_a96ddda36d13a0 47,199
+internal/runtime/executor/xai_executor_media.go
+  s_ea88183301aa81::t_5dfb35b8cc3d59 34,88
+internal/runtime/executor/xai_executor_request.go
+  s_ea88183301aa81::t_9abc988cd088a3 26,85,160
+internal/runtime/executor/xai_executor_stream.go
+  s_ea88183301aa81::t_11fa8cb743b3e2 41
+internal/runtime/executor/xai_executor_test.go
+  s_ea88183301aa81::t_1be1042d467972 2678,2683-2685,3098
+internal/runtime/executor/xai_executor_tokens.go
+  s_ea88183301aa81::t_aba95720852542 25
+internal/runtime/executor/xai_websockets_executor.go
+  s_ea88183301aa81::t_5cd16aee195e7a 522,631,1554,1567-1570
+internal/signature/claude_antigravity_boundaries_test.go
+  s_ea88183301aa81::t_ae50f04e500e26 1-143
+internal/signature/claude_antigravity_validation.go
+  s_ea88183301aa81::t_a9028f55cb9a9d 1-45
+internal/signature/claude_antigravity_validation_test.go
+  s_ea88183301aa81::t_a948c81a24b67c 1-145
+internal/signature/claude_validation.go
+  s_ea88183301aa81::t_2a707b5f7d9032 15-16,18-19,105-109,131-132,134-135,139-140,183-184,192-194,211,217-220,272-273,286-290,302,610,616-617,650-655,667-668,677-680,701,705-708,740-745,797
+internal/signature/provider_compatibility.go
+  s_ea88183301aa81::t_30a8a1b3cffe99 95,110,140,167-171,225,278-283,287-298,399
+internal/signature/provider_compatibility_test.go
+  s_ea88183301aa81::t_441b553d484e4a 62,73,86,137
+internal/signature/signaturetest/claude.go
+  s_ea88183301aa81::t_7122f662983c25 1-35
+internal/translator/claude/openai/chat-completions/claude_openai_native_response_test.go
+  s_ea88183301aa81::t_9504413d7d024a 1-83
+internal/translator/claude/openai/chat-completions/claude_openai_response.go
+  s_ea88183301aa81::t_4882fecf1527cd 15,342
+internal/translator/claude/openai/responses/claude_openai-responses_request.go
+  s_ea88183301aa81::t_3753d5d4cb8726 730-745,747-760,762
+internal/translator/claude/openai/responses/claude_openai-responses_request_test.go
+  s_ea88183301aa81::t_66bdcbe98f9014 2039-2050,2080-2093
+internal/translator/claude/openai/responses/claude_openai-responses_response.go
+  s_ea88183301aa81::t_9eab36174cfacb 1180,1502-1507
+internal/translator/claude/openai/responses/claude_openai_native_response_test.go
+  s_ea88183301aa81::t_f72a3664e3dcc1 1-99
+internal/translator/common/antigravity_tools.go
+  s_ea88183301aa81::t_b668266136c93d 22-23,25,31-38,46
+internal/translator/common/antigravity_tools_collision_test.go
+  s_ea88183301aa81::t_90beeabeef0765 1-17
+internal/translator/common/claude_native_response.go
+  s_ea88183301aa81::t_1cfa0838f92e3c 1-81
+internal/translator/common/claude_native_response_test.go
+  s_ea88183301aa81::t_ce6ae497a8c4fd 1-72
+internal/translator/common/claude_native_sse_test.go
+  s_ea88183301aa81::t_756620a23bdd59 1-137
+internal/translator/openai/interactions/responses/interactions_openai_responses_response.go
+  s_ea88183301aa81::t_56f5842f8f62d9 1535-1536,1538
+internal/translator/openai/openai/responses/openai_openai-responses_request.go
+  s_ea88183301aa81::t_44d2df9e62c752 76,485-490
+internal/translator/openai/openai/responses/openai_openai-responses_response.go
+  s_ea88183301aa81::t_54bbb8b0368f6f 216-222,369,400-406,433,660-675,1076-1084,1122
+internal/translator/openai/openai/responses/openai_openai-responses_tools.go
+  s_ea88183301aa81::t_2d6f5cc4bf9730 23,40,45-49,54-56,66,99-117
+internal/translator/openai/openai/responses/responses_tool_index.go
+  s_ea88183301aa81::t_1086119dad0394 121-122
+internal/translator/openai/openai/responses/shell_tool.go
+  s_ea88183301aa81::t_0020c8dbee55a0 1-132
+internal/translator/openai/openai/responses/shell_tool_test.go
+  s_ea88183301aa81::t_49e6fc550ef9a9 1-187
+sdk/api/handlers/handlers_interceptors.go
+  s_ea88183301aa81::t_a02608d1cfe37a 626-628,652,663,688-723
+sdk/cliproxy/antigravity_model_probes.go
+  s_ea88183301aa81::t_3bac2422a89e99 1-258
+sdk/cliproxy/antigravity_model_probes_test.go
+  s_ea88183301aa81::t_519f7ffbfda3a4 1-93
+sdk/cliproxy/antigravity_models.go
+  s_ea88183301aa81::t_ed3785ce722112 4,10-11,19,28-33,45-51,54-73,80,82-83,87-88,93-95,99-105,107-115,117-124,128,131-133,136-137,139-151,153,156-160,162-188,190-204,207-221,223-230,232,237-238,240-243,245-247,249-252,254-256,269,275,278-280,283,359-368,400-403,406-407,409,412-414,416-419,421-428,430-431,433-438,440-485,488-501,504-510,512-518,522-540,543-594,596-616,618-621
+sdk/cliproxy/antigravity_models_backoff_test.go
+  s_ea88183301aa81::t_6cd7c498a78a79 1-150
+sdk/cliproxy/antigravity_models_dedup_test.go
+  s_ea88183301aa81::t_f98577365ad474 5-6,14,22,26-29,31-33,35-36,43-47,49-53,55-57,59-61,63-65,67,69-70,72-73,77,80,82-91,93,95-104,106-107,109-112,114-117,121,124-125,127-129,131-133,135,137-158,162-194,198-213,218,222-226
+sdk/cliproxy/antigravity_models_fencing_test.go
+  s_ea88183301aa81::t_5933378e0d85e9 1-159
+sdk/cliproxy/antigravity_models_lifecycle_test.go
+  s_ea88183301aa81::t_2fd114f72647e0 1-153
+sdk/cliproxy/antigravity_models_publication_test.go
+  s_ea88183301aa81::t_577863b9c5802a 1-90
+sdk/cliproxy/antigravity_models_queue_test.go
+  s_ea88183301aa81::t_2bc90f4a16eb5b 1-189
+sdk/cliproxy/antigravity_models_refresh_test.go
+  s_ea88183301aa81::t_d8f729f014218f 1-201
+sdk/cliproxy/antigravity_models_registration_test.go
+  s_ea88183301aa81::t_16b133638b07bc 1-208
+sdk/cliproxy/antigravity_models_review_test.go
+  s_ea88183301aa81::t_4eaadfc1df698f 1-139
+sdk/cliproxy/antigravity_models_timeout_test.go
+  s_ea88183301aa81::t_603d9235bd898d 18-19,21-24,26-37,40-44,46-49,51-57,62,94-95,97,105-106,396
+sdk/cliproxy/auth/auth_change_watch.go
+  s_ea88183301aa81::t_d37d99563e383d 1-46
+sdk/cliproxy/auth/auth_change_watch_test.go
+  s_ea88183301aa81::t_ea223e9afc1654 1-79
+sdk/cliproxy/auth/conductor.go
+  s_ea88183301aa81::t_fa55e832a72bfa 161
+sdk/cliproxy/auth/conductor_lifecycle.go
+  s_ea88183301aa81::t_d4aa27d382d777 119,275,324,429-431
+sdk/cliproxy/service.go
+  s_ea88183301aa81::t_784018f6d263a1 135-143
+sdk/cliproxy/service_auth.go
+  s_ea88183301aa81::t_7bc6cb5539afaf 390,510,531-533,535-536
+sdk/cliproxy/service_config.go
+  s_ea88183301aa81::t_47955555c6f0ce 120
+sdk/cliproxy/service_excluded_models_test.go
+  s_ea88183301aa81::t_9624642df38792 359-360
+sdk/cliproxy/service_executionregistry_test.go
+  s_ea88183301aa81::t_1d4d39ff32edba 650-655,657-659,662-668
+sdk/cliproxy/service_executors.go
+  s_ea88183301aa81::t_9b69b96850cc5e 26-30,520-522
+sdk/cliproxy/service_lifecycle.go
+  s_ea88183301aa81::t_20fa03383b5532 40-42,212-214,244-250
+sdk/cliproxy/service_models.go
+  s_ea88183301aa81::t_518366468320c0 31,114-128,322-324,331-333,356,376
+sdk/cliproxy/service_plugins.go
+  s_ea88183301aa81::t_24d667a0113c83 166-167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8297f85c6087fcffa9243958cbbf44736e72cc13",
+  "prompts": {},
+  "sessions": {
+    "s_ea88183301aa81": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4009a2a5-eac3-4553-83b5-81cc56ee0a82",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Abdul Rafay <99marafay@gmail.com>"
+    }
+  }
+}
