@@ -1,0 +1,19 @@
+patches-rafay/README.md
+  s_ea88183301aa81::t_424eb37662418d 62-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1dfbb33a4074d541fe936e5ea0c89a3a12b9a0c7",
+  "prompts": {},
+  "sessions": {
+    "s_ea88183301aa81": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4009a2a5-eac3-4553-83b5-81cc56ee0a82",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Abdul Rafay <99marafay@gmail.com>"
+    }
+  }
+}
