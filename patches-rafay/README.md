@@ -59,6 +59,16 @@ Files:
 
 Overlap: both patches touch `selector.go` in separate hunks.
 
+## Upstream fixes cherry-picked onto v8.0.6
+
+These are upstream commits, not fork patches. The patch files above stay a diff against
+v8.0.6 and don't include them. Drop them when rebasing onto a tag that already has them.
+
+| Commit | Upstream | Why |
+| --- | --- | --- |
+| `c163bae4` | v8.0.12 | A credential whose access token was rejected and whose refresh got `invalid_grant` stays out of selection until its tokens change, instead of coming back after every cooldown. Claude refresh no longer retries at once on a transport or decoding error; the scheduled refresh tries again later. |
+| `33ec5502` | after v8.0.13 | The assistant prefill check parses model versions, so `claude-sonnet-5-5` and dotted names like `sonnet-4.6` are covered. |
+
 ## Re-apply onto a new upstream tag
 
 ```sh
